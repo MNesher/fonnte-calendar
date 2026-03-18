@@ -129,9 +129,25 @@ function extractEvent(message) {
   else if (lower.includes('שיחה'))   action = 'שיחה';
   else if (lower.includes('לעשות') || lower.includes('להזכיר')) action = 'משימה';
 
+  // ── Extract short subject (strip date/time noise words)
+  let subject = message
+    .replace(/\b(сегодня|завтра|послезавтра|сейчас)\b/gi, '')
+    .replace(/\b(в\s+)?\d{1,2}[:.]\d{2}\b/g, '')
+    .replace(/\b(в\s+)?\d{1,2}\s*(час|утра|вечера|дня)\b/gi, '')
+    .replace(/\b(понедельник|вторник|среду?|четверг|пятниц[уа]|суббот[уа]|воскресенье)\b/gi, '')
+    .replace(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\b/gi, '')
+    .replace(/\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
+    .replace(/\b(at|on|in)\s+\d{1,2}(:\d{2})?(am|pm)?\b/gi, '')
+    .replace(/\b\d{1,2}(:\d{2})?(am|pm)\b/gi, '')
+    .replace(/\b(по адресу|адрес|address)[^,\n]*/gi, '')
+    .replace(/[,.\s]{2,}/g, ' ')
+    .trim()
+    .slice(0, 60);
+
   const pad = n => String(n).padStart(2, '0');
   return {
     action,
+    subject,
     date: `${parsed.getFullYear()}-${pad(parsed.getMonth()+1)}-${pad(parsed.getDate())}`,
     time: `${pad(hour)}:${pad(minute)}`,
     address: extractAddress(message),
@@ -140,7 +156,7 @@ function extractEvent(message) {
 }
 
 // ─── CREATE CALENDAR EVENT ────────────────────────────────────────────────────
-async function createCalendarEvent(event, senderName, senderPhone) {
+async function createCalendarEvent(event, senderName, senderPhone, isManual) {
   const calendar = getCalendar();
   const [y,m,d] = event.date.split('-').map(Number);
   const [h,min] = event.time.split(':').map(Number);
@@ -149,15 +165,24 @@ async function createCalendarEvent(event, senderName, senderPhone) {
   const p = n => String(n).padStart(2,'0');
   const iso = dt => `${dt.getFullYear()}-${p(dt.getMonth()+1)}-${p(dt.getDate())}T${p(dt.getHours())}:${p(dt.getMinutes())}:00`;
 
-  // Title: "Встреча — Имя (+972...)"
-  const contactPart = senderName && senderName !== senderPhone
-    ? `${senderName} (${senderPhone})`
-    : senderPhone || senderName || '';
-  const summary = contactPart ? `${event.action} — ${contactPart}` : event.action;
+  // Title logic:
+  // Manual entry  → subject text from message (e.g. "сделать хешбониот")
+  // WhatsApp      → "Встреча — Имя (+972...)"
+  let summary;
+  if (isManual) {
+    summary = event.subject || event.action;
+  } else {
+    const contactPart = senderName && senderName !== senderPhone
+      ? `${senderName} (${senderPhone})`
+      : senderPhone || senderName || '';
+    summary = contactPart ? `${event.action} — ${contactPart}` : event.subject || event.action;
+  }
 
   // Description
   const lines = [
-    `📱 WhatsApp: ${senderName || ''} ${senderPhone ? `(${senderPhone})` : ''}`.trim(),
+    !isManual && (senderName || senderPhone)
+      ? `📱 WhatsApp: ${senderName || ''} ${senderPhone ? `(${senderPhone})` : ''}`.trim()
+      : null,
     `🎯 Действие: ${event.action}`,
     event.address ? `📍 Адрес: ${event.address}` : null,
     ``,
@@ -201,7 +226,7 @@ app.post('/webhook', async (req, res) => {
   if (!event) { console.log('   ⏭️  No event\n'); return; }
 
   try {
-    const created = await createCalendarEvent(event, name, phone);
+    const created = await createCalendarEvent(event, name, phone, false);
     console.log(`   ✅ "${created.summary}" ${event.date} ${event.time}${event.address ? ' 📍'+event.address : ''}`);
     console.log(`   🔗 ${created.htmlLink}\n`);
   } catch(err) {
@@ -311,7 +336,7 @@ app.post('/add', async (req, res) => {
   if (!event) return res.json({ ok: false, error: 'No date/event found' });
 
   try {
-    const created = await createCalendarEvent(event, 'Micha (manual)', '');
+    const created = await createCalendarEvent(event, '', '', true);
     console.log(`📝 Manual: "${created.summary}" ${event.date} ${event.time}`);
     res.json({ ok: true, summary: created.summary, date: event.date,
                time: event.time, address: event.address || null, link: created.htmlLink });
