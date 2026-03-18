@@ -1,4 +1,3 @@
-require('dotenv').config();
 const express  = require('express');
 const chrono   = require('chrono-node');
 const { google } = require('googleapis');
