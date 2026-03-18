@@ -130,16 +130,17 @@ function extractEvent(message) {
   else if (lower.includes('לעשות') || lower.includes('להזכיר')) action = 'משימה';
 
   // ── Extract short subject (strip date/time noise words)
+  // Note: \b doesn't work with Cyrillic — use space-aware patterns instead
   let subject = message
-    .replace(/\b(сегодня|завтра|послезавтра|сейчас)\b/gi, '')
-    .replace(/\b(в\s+)?\d{1,2}[:.]\d{2}\b/g, '')
-    .replace(/\b(в\s+)?\d{1,2}\s*(час|утра|вечера|дня)\b/gi, '')
-    .replace(/\b(понедельник|вторник|среду?|четверг|пятниц[уа]|суббот[уа]|воскресенье)\b/gi, '')
-    .replace(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\b/gi, '')
+    .replace(/(?:^|\s)(сегодня|завтра|послезавтра|сейчас)(?=\s|$)/gi, ' ')
+    .replace(/(?:^|\s)(понедельник|вторник|среду?|четверг|пятниц[уа]|суббот[уа]|воскресенье)(?=\s|$)/gi, ' ')
+    .replace(/(?:^|\s)в\s+\d{1,2}[:.]\d{2}(?=\s|$)/gi, ' ')
+    .replace(/(?:^|\s)в\s+\d{1,2}\s*(?:час|утра|вечера|дня)?(?=\s|$)/gi, ' ')
+    .replace(/\d{1,2}[:.]\d{2}/g, '')
     .replace(/\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
-    .replace(/\b(at|on|in)\s+\d{1,2}(:\d{2})?(am|pm)?\b/gi, '')
+    .replace(/\b(at|on)\s+\d{1,2}(:\d{2})?(am|pm)?\b/gi, '')
     .replace(/\b\d{1,2}(:\d{2})?(am|pm)\b/gi, '')
-    .replace(/\b(по адресу|адрес|address)[^,\n]*/gi, '')
+    .replace(/(?:по адресу|адрес|address)[^,\n]*/gi, '')
     .replace(/[,.\s]{2,}/g, ' ')
     .trim()
     .slice(0, 60);
