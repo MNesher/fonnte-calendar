@@ -177,6 +177,27 @@ async function createCalendarEvent(event, senderName, senderPhone, isManual) {
   const p = n => String(n).padStart(2,'0');
   const iso = dt => `${dt.getFullYear()}-${p(dt.getMonth()+1)}-${p(dt.getDate())}T${p(dt.getHours())}:${p(dt.getMinutes())}:00`;
 
+  // ── Deduplication: check if same event already exists within ±5 min window
+  const windowStart = new Date(start.getTime() - 5*60000);
+  const windowEnd   = new Date(start.getTime() + 5*60000);
+  const existing = await calendar.events.list({
+    calendarId: CALENDAR_ID,
+    timeMin: windowStart.toISOString(),
+    timeMax: windowEnd.toISOString(),
+    singleEvents: true,
+  });
+  const title = isManual ? (event.subject || event.action) : null; // compare by subject for manual
+  const duplicate = (existing.data.items || []).find(e => {
+    if (!e.summary) return false;
+    const norm = s => s.toLowerCase().replace(/\s+/g,' ').trim();
+    return norm(e.summary) === norm(event.subject || event.action) ||
+           (title && norm(e.summary).includes(norm(title)));
+  });
+  if (duplicate) {
+    console.log(`   ⏭️  Duplicate skipped: "${duplicate.summary}"`);
+    return duplicate;
+  }
+
   // Title logic:
   // Manual entry  → subject text from message (e.g. "сделать хешбониот")
   // WhatsApp      → "Встреча — Имя (+972...)"
