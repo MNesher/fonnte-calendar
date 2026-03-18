@@ -1,0 +1,6 @@
+node_modules/
+.env
+.google-creds.json
+.google-tokens.json
+ngrok.exe
+ngrok.zip
