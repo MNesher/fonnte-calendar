@@ -70,9 +70,9 @@ function extractAddress(message) {
 }
 
 // ─── EXTRACT EVENT ─────────────────────────────────────────────────────────────
-function extractEvent(message) {
+function extractEvent(message, skipKeywordCheck = false) {
   const lower = message.toLowerCase();
-  if (!MEETING_KEYWORDS.some(k => lower.includes(k))) return null;
+  if (!skipKeywordCheck && !MEETING_KEYWORDS.some(k => lower.includes(k))) return null;
 
   const now = new Date();
   let refDate = null;
@@ -254,50 +254,51 @@ const ADD_SECRET = process.env.ADD_SECRET || 'micha';
 app.get('/add', (req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(`<!DOCTYPE html>
-<html lang="he" dir="rtl">
+<html lang="ru" dir="ltr">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>📅 הוסף לקלנדר</title>
+<title>📅 В календарь</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, system-ui, sans-serif; background: #f0f2f5;
          min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
   .card { background: white; border-radius: 20px; padding: 28px 24px;
           width: 100%; max-width: 440px; box-shadow: 0 4px 24px rgba(0,0,0,0.10); }
-  h1 { font-size: 1.4rem; margin-bottom: 6px; color: #111; }
+  h1 { font-size: 1.5rem; margin-bottom: 6px; color: #111; }
   .sub { color: #888; font-size: 0.85rem; margin-bottom: 20px; }
   textarea { width: 100%; border: 2px solid #e0e0e0; border-radius: 12px;
-             padding: 14px; font-size: 1rem; resize: none; height: 110px;
-             transition: border 0.2s; font-family: inherit; direction: rtl; }
+             padding: 14px; font-size: 1rem; resize: none; height: 120px;
+             transition: border 0.2s; font-family: inherit; direction: ltr; text-align: left; }
   textarea:focus { outline: none; border-color: #4CAF50; }
-  .examples { color: #aaa; font-size: 0.78rem; margin: 8px 0 18px; line-height: 1.7; }
+  .examples { color: #bbb; font-size: 0.78rem; margin: 10px 0 20px; line-height: 1.8; }
   .examples span { display: block; }
-  button { width: 100%; background: #25D366; color: white; border: none;
-           border-radius: 12px; padding: 15px; font-size: 1.05rem; font-weight: 600;
-           cursor: pointer; transition: background 0.2s; }
-  button:hover { background: #1ebe5d; }
-  button:active { background: #17a050; transform: scale(0.98); }
-  .result { margin-top: 18px; padding: 14px; border-radius: 12px; font-size: 0.9rem;
-            text-align: center; display: none; }
-  .result.ok  { background: #e8f5e9; color: #2e7d32; }
-  .result.err { background: #fce4ec; color: #c62828; }
-  .loader { display: none; text-align: center; margin-top: 14px; color: #888; }
+  button { width: 100%; background: #4CAF50; color: white; border: none;
+           border-radius: 12px; padding: 15px; font-size: 1.1rem; font-weight: 600;
+           cursor: pointer; transition: background 0.2s; letter-spacing: 0.3px; }
+  button:hover { background: #43a047; }
+  button:active { background: #388e3c; transform: scale(0.98); }
+  .result { margin-top: 16px; padding: 14px 16px; border-radius: 12px; font-size: 0.95rem;
+            display: none; line-height: 1.5; }
+  .result.ok  { background: #e8f5e9; color: #2e7d32; border-left: 4px solid #4CAF50; }
+  .result.err { background: #fce4ec; color: #c62828; border-left: 4px solid #e53935; }
+  .result small { display: block; margin-top: 4px; opacity: 0.75; font-size: 0.82rem; }
+  .loader { display: none; text-align: center; margin-top: 14px; color: #999; font-size: 0.9rem; }
 </style>
 </head>
 <body>
 <div class="card">
-  <h1>📅 הוסף לקלנדר</h1>
-  <p class="sub">כתוב בחופשיות — המערכת תזהה תאריך ושעה אוטומטית</p>
-  <textarea id="msg" placeholder="לדוגמה: פגישה עם דוד מחר ב-14:00 ברחוב דיזנגוף 50&#10;или: встреча завтра в 11:00&#10;or: meeting tomorrow at 3pm"></textarea>
+  <h1>📅 В календарь</h1>
+  <p class="sub">Пишите свободно — система автоматически найдёт дату и время</p>
+  <textarea id="msg" placeholder="Примеры:&#10;встреча с Давидом завтра в 14:00&#10;сделать хешбониот сегодня в 10:00&#10;zoom с клиентом в пятницу в 15:30"></textarea>
   <div class="examples">
-    <span>✅ פגישה עם רועי ביום שלישי ב-10:00</span>
-    <span>✅ встреча с клиентом в пятницу в 15:30</span>
+    <span>✅ встреча с Романом в среду в 11:00</span>
+    <span>✅ сегодня в 10:00 подать документы Серябряникову</span>
     <span>✅ zoom call on Thursday at 2pm</span>
-    <span>✅ сделать хешбониот сегодня в 10:00</span>
+    <span>✅ פגישה עם דוד מחר ב-14:00</span>
   </div>
-  <button onclick="send()">➕ הוסף לקלנדר</button>
-  <div class="loader" id="loader">⏳ מוסיף...</div>
+  <button onclick="send()">➕ Добавить в календарь</button>
+  <div class="loader" id="loader">⏳ Добавляю...</div>
   <div class="result" id="result"></div>
 </div>
 <script>
@@ -316,20 +317,27 @@ async function send() {
     const el = document.getElementById('result');
     if (data.ok) {
       el.className = 'result ok';
-      el.innerHTML = '✅ ' + data.summary + '<br><small>' + data.date + ' ' + data.time + (data.address ? '<br>📍 ' + data.address : '') + '</small>';
+      el.innerHTML = '✅ <strong>' + data.summary + '</strong>'
+        + '<small>' + data.date + ' · ' + data.time + '–' + addMinutes(data.time, 30)
+        + (data.address ? ' · 📍 ' + data.address : '') + '</small>';
       document.getElementById('msg').value = '';
     } else {
       el.className = 'result err';
-      el.innerHTML = '❌ ' + (data.error || 'לא זוהה תאריך/אירוע');
+      el.innerHTML = '❌ ' + (data.error || 'Не найдена дата или время');
     }
     el.style.display = 'block';
   } catch(e) {
     const el = document.getElementById('result');
     el.className = 'result err';
-    el.innerHTML = '❌ שגיאת חיבור';
+    el.innerHTML = '❌ Ошибка соединения';
     el.style.display = 'block';
   }
   document.getElementById('loader').style.display = 'none';
+}
+function addMinutes(time, mins) {
+  const [h,m] = time.split(':').map(Number);
+  const t = h*60+m+mins;
+  return String(Math.floor(t/60)%24).padStart(2,'0')+':'+String(t%60).padStart(2,'0');
 }
 document.getElementById('msg').addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send();
@@ -344,8 +352,8 @@ app.post('/add', async (req, res) => {
   if (secret !== ADD_SECRET) return res.status(403).json({ error: 'Unauthorized' });
   if (!message) return res.json({ ok: false, error: 'Empty message' });
 
-  const event = extractEvent(message);
-  if (!event) return res.json({ ok: false, error: 'No date/event found' });
+  const event = extractEvent(message, true); // manual: skip keyword check
+  if (!event) return res.json({ ok: false, error: 'Не найдена дата или время' });
 
   try {
     const created = await createCalendarEvent(event, '', '', true);
