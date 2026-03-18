@@ -25,9 +25,15 @@ function getCalendar() {
 
 // ─── KEYWORDS ─────────────────────────────────────────────────────────────────
 const MEETING_KEYWORDS = [
+  // Russian
   'встреч','совещан','звонок','созвон','зум','встрет',
   'напомни','сделать','задач','нужно','надо','запиши','не забу',
+  // Hebrew — events / actions
   'פגישה','שיחה','זום','ישיבה','תזכורת','לעשות','להזכיר','זכור',
+  'תור','נפגש','להיפגש','בישיבה','אירוע','ביקור','הצגה','טיסה',
+  // Hebrew — date/time triggers (if someone writes time, it's likely a calendar item)
+  'היום','מחר','מחרתיים','בשעה',
+  // English
   'meeting','call','appointment','zoom','remind','schedule','task','todo','don\'t forget'
 ];
 
@@ -86,6 +92,13 @@ function extractEvent(message, skipKeywordCheck = false) {
     if (offset !== null) refDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset);
   }
 
+  // Hebrew date words
+  if (!refDate) {
+    if (lower.includes('מחרתיים')) refDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2);
+    else if (lower.includes('מחר'))  refDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    else if (lower.includes('היום')) refDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }
+
   if (!refDate) {
     const m = message.match(/(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)/i);
     if (m) {
@@ -102,11 +115,25 @@ function extractEvent(message, skipKeywordCheck = false) {
   if (!parsed) return null;
 
   let hour = parsed.getHours(), minute = parsed.getMinutes();
+
+  // Russian time: "в 10:00", "в 10 вечера"
   const timeMatch = message.match(/в\s+(\d{1,2})[:\.](\d{2})/);
   if (timeMatch) { hour = parseInt(timeMatch[1]); minute = parseInt(timeMatch[2]); }
   else {
     const hm = message.match(/в\s+(\d{1,2})\s*(час|утра|вечера|дня)?/);
     if (hm) { hour = parseInt(hm[1]); if (hm[2] === 'вечера' || hm[2] === 'дня') { if (hour < 12) hour += 12; } }
+  }
+
+  // Hebrew time: "ב10", "ב-14:30", "בשעה 9"
+  if (!timeMatch) {
+    const heTime = message.match(/(?:בשעה\s+|ב-?)(\d{1,2})(?:[:.:](\d{2}))?(?!\d)/);
+    if (heTime) {
+      const h = parseInt(heTime[1]);
+      if (h >= 6 && h <= 23) {
+        hour   = h;
+        minute = heTime[2] ? parseInt(heTime[2]) : 0;
+      }
+    }
   }
 
   if (refDate && chronoResults.length === 0)
@@ -125,8 +152,11 @@ function extractEvent(message, skipKeywordCheck = false) {
            lower.includes('task')    || lower.includes('todo'))                action = 'Задача';
   else if (lower.includes('напомни') || lower.includes('не забу') ||
            lower.includes('remind')  || lower.includes("don't forget"))       action = 'Напоминание';
-  else if (lower.includes('פגישה'))  action = 'פגישה';
+  else if (lower.includes('פגישה') || lower.includes('להיפגש') || lower.includes('נפגש')) action = 'פגישה';
   else if (lower.includes('שיחה'))   action = 'שיחה';
+  else if (lower.includes('זום'))    action = 'זום';
+  else if (lower.includes('תור'))    action = 'תור';
+  else if (lower.includes('טיסה'))   action = 'טיסה';
   else if (lower.includes('לעשות') || lower.includes('להזכיר')) action = 'משימה';
 
   // ── Extract short subject (strip date/time noise words)
@@ -149,8 +179,13 @@ function extractEvent(message, skipKeywordCheck = false) {
     // English: "at 2pm", "at 14:00"
     .replace(/\b(at|on)\s+\d{1,2}(:\d{2})?(am|pm)?\b/gi, '')
     .replace(/\b\d{1,2}(:\d{2})?(am|pm)\b/gi, '')
+    // Hebrew: date words
+    .replace(/(?:^|\s)(?:היום|מחר|מחרתיים)(?=\s|$)/g, ' ')
+    // Hebrew: "ב10", "ב-14:30", "בשעה 9"
+    .replace(/בשעה\s+\d{1,2}(?:[:.]\d{2})?/g, ' ')
+    .replace(/ב-?\d{1,2}(?:[:.]\d{2})?/g, ' ')
     // Address chunks
-    .replace(/(?:по адресу|адрес|address)[^,\n]*/gi, '')
+    .replace(/(?:по адресу|адрес|address|בכתובת)[^,\n]*/gi, '')
     // Clean up
     .replace(/[,.\s]{2,}/g, ' ')
     .trim()
@@ -175,7 +210,7 @@ async function createCalendarEvent(event, senderName, senderPhone, isManual) {
   const start = new Date(y, m-1, d, h, min);
 
   // Duration and reminders by event type
-  const isMeetingType = ['Встреча','Совещание','פגישה'].includes(event.action);
+  const isMeetingType = ['Встреча','Совещание','פגישה','תור','ישיבה'].includes(event.action);
   // Tasks/reminders/calls: 5 min duration, 1 reminder; Meetings: 60 min, 2 reminders
   const durationMin  = isMeetingType ? 60 : 5;
   const reminderMins = isMeetingType ? [90, 15] : [5];
