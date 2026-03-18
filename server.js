@@ -26,9 +26,14 @@ function getCalendar() {
 
 // ─── KEYWORDS ─────────────────────────────────────────────────────────────────
 const MEETING_KEYWORDS = [
-  'встреч','совещан','звонок','созвон','зум','встрет','напомни',
-  'פגישה','שיחה','זום','ישיבה','תזכורת',
-  'meeting','call','appointment','zoom','remind','schedule'
+  // Встречи / звонки
+  'встреч','совещан','звонок','созвон','зум','встрет',
+  // Задачи / напоминания
+  'напомни','сделать','задач','нужно','надо','запиши','не забу',
+  // Иврит
+  'פגישה','שיחה','זום','ישיבה','תזכורת','לעשות','להזכיר','זכור',
+  // English
+  'meeting','call','appointment','zoom','remind','schedule','task','todo','don\'t forget'
 ];
 
 const RU_MONTHS = {
@@ -95,12 +100,18 @@ function extractEvent(message) {
     parsed = new Date(refDate.getFullYear(), refDate.getMonth(), refDate.getDate(), hour, minute);
 
   let title = 'Событие';
-  if (lower.includes('зум') || lower.includes('zoom'))              title = 'Zoom';
-  else if (lower.includes('звонок') || lower.includes('call'))      title = 'Звонок';
-  else if (lower.includes('встреч') || lower.includes('meeting'))   title = 'Встреча';
+  if (lower.includes('зум') || lower.includes('zoom'))                        title = 'Zoom';
+  else if (lower.includes('звонок') || lower.includes('call'))                title = 'Звонок';
+  else if (lower.includes('встреч') || lower.includes('meeting'))             title = 'Встреча';
+  else if (lower.includes('совещан'))                                         title = 'Совещание';
+  else if (lower.includes('сделать') || lower.includes('задач') ||
+           lower.includes('нужно')   || lower.includes('надо')  ||
+           lower.includes('task')    || lower.includes('todo'))               title = 'Задача';
+  else if (lower.includes('напомни') || lower.includes('не забу') ||
+           lower.includes('remind')  || lower.includes('don\'t forget'))      title = 'Напоминание';
   else if (lower.includes('פגישה'))   title = 'פגישה';
   else if (lower.includes('שיחה'))    title = 'שיחה';
-  else if (lower.includes('совещан')) title = 'Совещание';
+  else if (lower.includes('לעשות') || lower.includes('להזכיר'))              title = 'משימה';
 
   const pad = n => String(n).padStart(2, '0');
   return {
