@@ -132,15 +132,26 @@ function extractEvent(message) {
   // ── Extract short subject (strip date/time noise words)
   // Note: \b doesn't work with Cyrillic — use space-aware patterns instead
   let subject = message
-    .replace(/(?:^|\s)(сегодня|завтра|послезавтра|сейчас)(?=\s|$)/gi, ' ')
-    .replace(/(?:^|\s)(понедельник|вторник|среду?|четверг|пятниц[уа]|суббот[уа]|воскресенье)(?=\s|$)/gi, ' ')
-    .replace(/(?:^|\s)в\s+\d{1,2}[:.]\d{2}(?=\s|$)/gi, ' ')
-    .replace(/(?:^|\s)в\s+\d{1,2}\s*(?:час|утра|вечера|дня)?(?=\s|$)/gi, ' ')
+    // Russian: "в пятницу", "в среду" etc (preposition + weekday together)
+    .replace(/в\s+(?:понедельник|вторник|среду?|четверг|пятниц[уа]|суббот[уа]|воскресенье)/gi, ' ')
+    // Russian: standalone weekday
+    .replace(/(?:^|\s)(?:понедельник|вторник|среду?|четверг|пятниц[уа]|суббот[уа]|воскресенье)(?=\s|$)/gi, ' ')
+    // Russian: сегодня/завтра/послезавтра
+    .replace(/(?:^|\s)(?:сегодня|завтра|послезавтра|сейчас)(?=\s|$)/gi, ' ')
+    // Russian: "в 10:00", "в 10", "в 10 вечера"
+    .replace(/в\s+\d{1,2}(?:[:.]\d{2})?\s*(?:час|утра|вечера|дня)?/gi, ' ')
+    // Any remaining time like "10:00"
     .replace(/\d{1,2}[:.]\d{2}/g, '')
+    // English: "on Thursday", "on Monday"
+    .replace(/\b(on|at)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)/gi, ' ')
+    // English weekdays standalone
     .replace(/\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
+    // English: "at 2pm", "at 14:00"
     .replace(/\b(at|on)\s+\d{1,2}(:\d{2})?(am|pm)?\b/gi, '')
     .replace(/\b\d{1,2}(:\d{2})?(am|pm)\b/gi, '')
+    // Address chunks
     .replace(/(?:по адресу|адрес|address)[^,\n]*/gi, '')
+    // Clean up
     .replace(/[,.\s]{2,}/g, ' ')
     .trim()
     .slice(0, 60);
