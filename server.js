@@ -173,7 +173,14 @@ async function createCalendarEvent(event, senderName, senderPhone, isManual) {
   const [y,m,d] = event.date.split('-').map(Number);
   const [h,min] = event.time.split(':').map(Number);
   const start = new Date(y, m-1, d, h, min);
-  const end   = new Date(start.getTime() + 30*60000); // 30 minutes
+
+  // Duration and reminders by event type
+  const isMeetingType = ['Встреча','Совещание','פגישה'].includes(event.action);
+  // Tasks/reminders/calls: 5 min duration, 1 reminder; Meetings: 60 min, 2 reminders
+  const durationMin  = isMeetingType ? 60 : 5;
+  const reminderMins = isMeetingType ? [90, 15] : [5];
+
+  const end = new Date(start.getTime() + durationMin*60000);
   const p = n => String(n).padStart(2,'0');
   const iso = dt => `${dt.getFullYear()}-${p(dt.getMonth()+1)}-${p(dt.getDate())}T${p(dt.getHours())}:${p(dt.getMinutes())}:00`;
 
@@ -230,10 +237,7 @@ async function createCalendarEvent(event, senderName, senderPhone, isManual) {
     end:   { dateTime: iso(end),   timeZone: 'Asia/Jerusalem' },
     reminders: {
       useDefault: false,
-      overrides: [
-        { method: 'popup', minutes: 90 },
-        { method: 'popup', minutes: 15 },
-      ]
+      overrides: reminderMins.map(m => ({ method: 'popup', minutes: m }))
     }
   };
 
@@ -339,7 +343,7 @@ async function send() {
     if (data.ok) {
       el.className = 'result ok';
       el.innerHTML = '✅ <strong>' + data.summary + '</strong>'
-        + '<small>' + data.date + ' · ' + data.time + '–' + addMinutes(data.time, 30)
+        + '<small>' + data.date + ' · ' + data.time + '–' + addMinutes(data.time, data.duration || 5)
         + (data.address ? ' · 📍 ' + data.address : '') + '</small>';
       document.getElementById('msg').value = '';
     } else {
@@ -379,8 +383,10 @@ app.post('/add', async (req, res) => {
   try {
     const created = await createCalendarEvent(event, '', '', true);
     console.log(`📝 Manual: "${created.summary}" ${event.date} ${event.time}`);
+    const dur = ['Встреча','Совещание','פגישה'].includes(event.action) ? 60 : 5;
     res.json({ ok: true, summary: created.summary, date: event.date,
-               time: event.time, address: event.address || null, link: created.htmlLink });
+               time: event.time, duration: dur,
+               address: event.address || null, link: created.htmlLink });
   } catch(err) {
     console.error(`❌ Manual add error: ${err.message}`);
     res.json({ ok: false, error: err.message });
