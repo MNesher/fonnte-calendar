@@ -211,4 +211,114 @@ app.post('/webhook', async (req, res) => {
 
 app.get('/', (req, res) => res.send('✅ Fonnte→Calendar webhook is running'));
 
+// ─── MANUAL ADD PAGE ───────────────────────────────────────────────────────────
+const ADD_SECRET = process.env.ADD_SECRET || 'micha';
+
+app.get('/add', (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>📅 הוסף לקלנדר</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, system-ui, sans-serif; background: #f0f2f5;
+         min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .card { background: white; border-radius: 20px; padding: 28px 24px;
+          width: 100%; max-width: 440px; box-shadow: 0 4px 24px rgba(0,0,0,0.10); }
+  h1 { font-size: 1.4rem; margin-bottom: 6px; color: #111; }
+  .sub { color: #888; font-size: 0.85rem; margin-bottom: 20px; }
+  textarea { width: 100%; border: 2px solid #e0e0e0; border-radius: 12px;
+             padding: 14px; font-size: 1rem; resize: none; height: 110px;
+             transition: border 0.2s; font-family: inherit; direction: rtl; }
+  textarea:focus { outline: none; border-color: #4CAF50; }
+  .examples { color: #aaa; font-size: 0.78rem; margin: 8px 0 18px; line-height: 1.7; }
+  .examples span { display: block; }
+  button { width: 100%; background: #25D366; color: white; border: none;
+           border-radius: 12px; padding: 15px; font-size: 1.05rem; font-weight: 600;
+           cursor: pointer; transition: background 0.2s; }
+  button:hover { background: #1ebe5d; }
+  button:active { background: #17a050; transform: scale(0.98); }
+  .result { margin-top: 18px; padding: 14px; border-radius: 12px; font-size: 0.9rem;
+            text-align: center; display: none; }
+  .result.ok  { background: #e8f5e9; color: #2e7d32; }
+  .result.err { background: #fce4ec; color: #c62828; }
+  .loader { display: none; text-align: center; margin-top: 14px; color: #888; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>📅 הוסף לקלנדר</h1>
+  <p class="sub">כתוב בחופשיות — המערכת תזהה תאריך ושעה אוטומטית</p>
+  <textarea id="msg" placeholder="לדוגמה: פגישה עם דוד מחר ב-14:00 ברחוב דיזנגוף 50&#10;или: встреча завтра в 11:00&#10;or: meeting tomorrow at 3pm"></textarea>
+  <div class="examples">
+    <span>✅ פגישה עם רועי ביום שלישי ב-10:00</span>
+    <span>✅ встреча с клиентом в пятницу в 15:30</span>
+    <span>✅ zoom call on Thursday at 2pm</span>
+    <span>✅ сделать хешбониот сегодня в 10:00</span>
+  </div>
+  <button onclick="send()">➕ הוסף לקלנדר</button>
+  <div class="loader" id="loader">⏳ מוסיף...</div>
+  <div class="result" id="result"></div>
+</div>
+<script>
+async function send() {
+  const msg = document.getElementById('msg').value.trim();
+  if (!msg) return;
+  document.getElementById('loader').style.display = 'block';
+  document.getElementById('result').style.display = 'none';
+  try {
+    const r = await fetch('/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg, secret: '${ADD_SECRET}' })
+    });
+    const data = await r.json();
+    const el = document.getElementById('result');
+    if (data.ok) {
+      el.className = 'result ok';
+      el.innerHTML = '✅ ' + data.summary + '<br><small>' + data.date + ' ' + data.time + (data.address ? '<br>📍 ' + data.address : '') + '</small>';
+      document.getElementById('msg').value = '';
+    } else {
+      el.className = 'result err';
+      el.innerHTML = '❌ ' + (data.error || 'לא זוהה תאריך/אירוע');
+    }
+    el.style.display = 'block';
+  } catch(e) {
+    const el = document.getElementById('result');
+    el.className = 'result err';
+    el.innerHTML = '❌ שגיאת חיבור';
+    el.style.display = 'block';
+  }
+  document.getElementById('loader').style.display = 'none';
+}
+document.getElementById('msg').addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send();
+});
+</script>
+</body>
+</html>`);
+});
+
+app.post('/add', async (req, res) => {
+  const { message, secret } = req.body;
+  if (secret !== ADD_SECRET) return res.status(403).json({ error: 'Unauthorized' });
+  if (!message) return res.json({ ok: false, error: 'Empty message' });
+
+  const event = extractEvent(message);
+  if (!event) return res.json({ ok: false, error: 'No date/event found' });
+
+  try {
+    const created = await createCalendarEvent(event, 'Micha (manual)', '');
+    console.log(`📝 Manual: "${created.summary}" ${event.date} ${event.time}`);
+    res.json({ ok: true, summary: created.summary, date: event.date,
+               time: event.time, address: event.address || null, link: created.htmlLink });
+  } catch(err) {
+    console.error(`❌ Manual add error: ${err.message}`);
+    res.json({ ok: false, error: err.message });
+  }
+});
+
 app.listen(PORT, () => console.log(`🚀 Port ${PORT} | Calendar: ${CALENDAR_ID}`));
