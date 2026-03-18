@@ -218,8 +218,10 @@ async function createCalendarEvent(event, senderName, senderPhone, isManual) {
     summary = contactPart ? `${event.action} — ${contactPart}` : event.subject || event.action;
   }
 
-  // Description
-  const lines = [
+  // Build description (event ID not known yet — will patch after insert)
+  const BASE_URL = process.env.BASE_URL || 'https://fonnte-calendar-production.up.railway.app';
+
+  const descLines = [
     !isManual && (senderName || senderPhone)
       ? `📱 WhatsApp: ${senderName || ''} ${senderPhone ? `(${senderPhone})` : ''}`.trim()
       : null,
@@ -228,11 +230,14 @@ async function createCalendarEvent(event, senderName, senderPhone, isManual) {
     ``,
     `💬 Сообщение:`,
     event.description,
+    ``,
+    `─────────────────`,
+    `🔘 Статус: ожидает`,
   ].filter(l => l !== null);
 
   const requestBody = {
     summary,
-    description: lines.join('\n'),
+    description: descLines.join('\n'),
     start: { dateTime: iso(start), timeZone: 'Asia/Jerusalem' },
     end:   { dateTime: iso(end),   timeZone: 'Asia/Jerusalem' },
     reminders: {
@@ -244,7 +249,18 @@ async function createCalendarEvent(event, senderName, senderPhone, isManual) {
   if (event.address) requestBody.location = event.address;
 
   const res = await calendar.events.insert({ calendarId: CALENDAR_ID, requestBody });
-  return res.data;
+  const created = res.data;
+
+  // Patch description to add manage link now that we have the event ID
+  const manageUrl = `${BASE_URL}/event/${created.id}?t=${ADD_SECRET}`;
+  const patchedDesc = descLines.join('\n') + `\n🔗 Управление: ${manageUrl}`;
+  await calendar.events.patch({
+    calendarId: CALENDAR_ID,
+    eventId: created.id,
+    requestBody: { description: patchedDesc }
+  });
+  created.description = patchedDesc;
+  return created;
 }
 
 // ─── WEBHOOK ──────────────────────────────────────────────────────────────────
@@ -272,6 +288,164 @@ app.post('/webhook', async (req, res) => {
 });
 
 app.get('/', (req, res) => res.send('✅ Fonnte→Calendar webhook is running'));
+
+// ─── EVENT STATUS PAGE ─────────────────────────────────────────────────────────
+const STATUS_LABELS = {
+  done:      { emoji: '✅', label: 'Сделано',       color: '2'  },  // green
+  approved:  { emoji: '👍', label: 'Одобрено',      color: '2'  },  // green
+  rejected:  { emoji: '❌', label: 'Не одобрено',   color: '11' },  // red
+  undone:    { emoji: '🔴', label: 'Не сделано',    color: '11' },  // red
+  pending:   { emoji: '🔘', label: 'Ожидает',       color: null },  // default
+};
+
+app.get('/event/:id', async (req, res) => {
+  const { id } = req.params;
+  const { t } = req.query;
+  if (t !== ADD_SECRET) return res.status(403).send('Нет доступа');
+
+  try {
+    const calendar = getCalendar();
+    const e = (await calendar.events.get({ calendarId: CALENDAR_ID, eventId: id })).data;
+    const title = e.summary || '';
+    const dt = e.start?.dateTime || '';
+    const dateStr = dt ? new Date(dt).toLocaleString('ru-RU', { timeZone:'Asia/Jerusalem',
+      weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }) : '';
+
+    // Detect current status from title prefix
+    let currentStatus = 'pending';
+    for (const [key, v] of Object.entries(STATUS_LABELS)) {
+      if (title.startsWith(v.emoji + ' ')) { currentStatus = key; break; }
+    }
+    const cleanTitle = title.replace(/^[✅👍❌🔴🔘]\s/, '');
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(`<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Статус события</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,system-ui,sans-serif; background:#f0f2f5;
+         min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px; }
+  .card { background:white; border-radius:20px; padding:28px 22px;
+          width:100%; max-width:400px; box-shadow:0 4px 24px rgba(0,0,0,.10); }
+  h2 { font-size:1.25rem; color:#111; margin-bottom:4px; line-height:1.3; }
+  .dt { color:#888; font-size:.88rem; margin-bottom:22px; }
+  .status-now { font-size:.9rem; color:#555; margin-bottom:18px; padding:10px 14px;
+                background:#f5f5f5; border-radius:10px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .btn { border:none; border-radius:12px; padding:14px 8px; font-size:1rem;
+         font-weight:600; cursor:pointer; transition:all .15s; }
+  .btn:active { transform:scale(.96); }
+  .btn-done     { background:#e8f5e9; color:#2e7d32; }
+  .btn-approved { background:#e3f2fd; color:#1565c0; }
+  .btn-undone   { background:#fce4ec; color:#c62828; }
+  .btn-rejected { background:#fff3e0; color:#e65100; }
+  .btn-pending  { background:#f3e5f5; color:#6a1b9a; grid-column:1/-1; }
+  .btn.active   { outline:3px solid #333; }
+  .result { margin-top:16px; padding:12px; border-radius:10px; text-align:center;
+            font-size:.95rem; display:none; }
+  .result.ok  { background:#e8f5e9; color:#2e7d32; }
+  .result.err { background:#fce4ec; color:#c62828; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h2>${cleanTitle}</h2>
+  <div class="dt">${dateStr}</div>
+  <div class="status-now">Текущий статус: <strong>${STATUS_LABELS[currentStatus].emoji} ${STATUS_LABELS[currentStatus].label}</strong></div>
+  <div class="grid">
+    <button class="btn btn-done ${currentStatus==='done'?'active':''}"
+      onclick="setStatus('done')">✅ Сделано</button>
+    <button class="btn btn-approved ${currentStatus==='approved'?'active':''}"
+      onclick="setStatus('approved')">👍 Одобрено</button>
+    <button class="btn btn-undone ${currentStatus==='undone'?'active':''}"
+      onclick="setStatus('undone')">🔴 Не сделано</button>
+    <button class="btn btn-rejected ${currentStatus==='rejected'?'active':''}"
+      onclick="setStatus('rejected')">❌ Не одобрено</button>
+    <button class="btn btn-pending ${currentStatus==='pending'?'active':''}"
+      onclick="setStatus('pending')">🔘 Сбросить статус</button>
+  </div>
+  <div class="result" id="result"></div>
+</div>
+<script>
+async function setStatus(status) {
+  try {
+    const r = await fetch('/event/${id}/status', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ status, t: '${ADD_SECRET}' })
+    });
+    const data = await r.json();
+    const el = document.getElementById('result');
+    if (data.ok) {
+      el.className = 'result ok';
+      el.textContent = 'Сохранено: ' + data.label;
+      el.style.display = 'block';
+      document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+      document.querySelector('.btn-' + status)?.classList.add('active');
+    } else {
+      el.className = 'result err';
+      el.textContent = 'Ошибка: ' + (data.error || '?');
+      el.style.display = 'block';
+    }
+  } catch(e) {
+    const el = document.getElementById('result');
+    el.className = 'result err';
+    el.textContent = 'Ошибка соединения';
+    el.style.display = 'block';
+  }
+}
+</script>
+</body>
+</html>`);
+  } catch(err) {
+    res.status(500).send('Ошибка: ' + err.message);
+  }
+});
+
+app.post('/event/:id/status', async (req, res) => {
+  const { id } = req.params;
+  const { status, t } = req.body;
+  if (t !== ADD_SECRET) return res.status(403).json({ error: 'Нет доступа' });
+  if (!STATUS_LABELS[status]) return res.status(400).json({ error: 'Неверный статус' });
+
+  try {
+    const calendar = getCalendar();
+    const e = (await calendar.events.get({ calendarId: CALENDAR_ID, eventId: id })).data;
+
+    // Clean old status emoji from title
+    const cleanTitle = (e.summary || '').replace(/^[✅👍❌🔴🔘]\s/, '');
+    const { emoji, label, color } = STATUS_LABELS[status];
+    const newTitle = status === 'pending' ? cleanTitle : `${emoji} ${cleanTitle}`;
+
+    // Update status line in description
+    const newDesc = (e.description || '')
+      .replace(/🔘 Статус:.*/, `${emoji} Статус: ${label}`);
+
+    const patch = {
+      summary: newTitle,
+      description: newDesc,
+    };
+    if (color) patch.colorId = color;
+    else delete patch.colorId; // reset to default — use separate call
+
+    await calendar.events.patch({ calendarId: CALENDAR_ID, eventId: id, requestBody: patch });
+    if (!color) {
+      // Reset color by setting colorId to empty string not allowed — use update
+      await calendar.events.patch({ calendarId: CALENDAR_ID, eventId: id,
+        requestBody: { colorId: '0' } });
+    }
+
+    console.log(`🏷️  Status "${label}" → "${newTitle}"`);
+    res.json({ ok: true, label, emoji });
+  } catch(err) {
+    console.error('Status update error:', err.message);
+    res.json({ ok: false, error: err.message });
+  }
+});
 
 // ─── MANUAL ADD PAGE ───────────────────────────────────────────────────────────
 const ADD_SECRET = process.env.ADD_SECRET || 'micha';
