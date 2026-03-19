@@ -78,6 +78,11 @@ function extractAddress(message) {
 // ─── EXTRACT EVENT ─────────────────────────────────────────────────────────────
 function extractEvent(message, skipKeywordCheck = false) {
   const lower = message.toLowerCase();
+
+  // ── Bare time message: "15.30", "15:30", "9:00" → Zoom today
+  const bareTimeMatch = message.trim().match(/^(\d{1,2})[.:](\d{2})$/);
+  if (bareTimeMatch) skipKeywordCheck = true;
+
   if (!skipKeywordCheck && !MEETING_KEYWORDS.some(k => lower.includes(k))) return null;
 
   const now = new Date();
@@ -98,6 +103,9 @@ function extractEvent(message, skipKeywordCheck = false) {
     else if (lower.includes('מחר'))  refDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
     else if (lower.includes('היום')) refDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   }
+
+  // Bare time with no date context → default to today
+  if (!refDate && bareTimeMatch) refDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
   if (!refDate) {
     const m = message.match(/(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)/i);
@@ -136,11 +144,20 @@ function extractEvent(message, skipKeywordCheck = false) {
     }
   }
 
+  // General fallback: bare "15.30" or "15:30" anywhere (catches bare time messages)
+  if (!timeMatch) {
+    const genTime = message.match(/\b(\d{1,2})[.:](\d{2})\b/);
+    if (genTime) {
+      const h = parseInt(genTime[1]), m = parseInt(genTime[2]);
+      if (h >= 0 && h <= 23 && m >= 0 && m <= 59) { hour = h; minute = m; }
+    }
+  }
+
   if (refDate && chronoResults.length === 0)
     parsed = new Date(refDate.getFullYear(), refDate.getMonth(), refDate.getDate(), hour, minute);
 
   // ── Title / action type
-  let action = 'Событие';
+  let action = bareTimeMatch ? 'Zoom' : 'Событие';  // bare time → Zoom by default
   if (lower.includes('зум') || lower.includes('zoom'))                        action = 'Zoom';
   else if (lower.includes('звонок') || lower.includes('созвон') ||
            lower.includes('call'))                                             action = 'Звонок';
