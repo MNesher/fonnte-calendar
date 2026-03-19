@@ -514,10 +514,20 @@ app.get('/add', (req, res) => {
   button:active { background: #388e3c; transform: scale(0.98); }
   .result { margin-top: 16px; padding: 14px 16px; border-radius: 12px; font-size: 0.95rem;
             display: none; line-height: 1.5; }
-  .result.ok  { background: #e8f5e9; color: #2e7d32; border-left: 4px solid #4CAF50; }
-  .result.err { background: #fce4ec; color: #c62828; border-left: 4px solid #e53935; }
-  .result small { display: block; margin-top: 4px; opacity: 0.75; font-size: 0.82rem; }
+  .result.ok      { background: #e8f5e9; color: #2e7d32; border-left: 4px solid #4CAF50; }
+  .result.err     { background: #fce4ec; color: #c62828; border-left: 4px solid #e53935; }
+  .result.warn    { background: #fff8e1; color: #5d4037; border-left: 4px solid #ffa000; }
+  .result small   { display: block; margin-top: 4px; opacity: 0.75; font-size: 0.82rem; }
   .loader { display: none; text-align: center; margin-top: 14px; color: #999; font-size: 0.9rem; }
+  .conflict-list  { margin: 8px 0 12px; padding-left: 16px; font-size: 0.9rem; }
+  .conflict-list li { margin-bottom: 3px; }
+  .conflict-btns  { display: flex; gap: 8px; margin-top: 10px; }
+  .btn-confirm    { flex: 1; padding: 11px; border: none; border-radius: 10px;
+                    background: #e65100; color: white; font-size: 0.95rem;
+                    font-weight: 600; cursor: pointer; }
+  .btn-cancel     { flex: 1; padding: 11px; border: none; border-radius: 10px;
+                    background: #eee; color: #555; font-size: 0.95rem;
+                    font-weight: 600; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -536,16 +546,19 @@ app.get('/add', (req, res) => {
   <div class="result" id="result"></div>
 </div>
 <script>
-async function send() {
-  const msg = document.getElementById('msg').value.trim();
+let _pendingMsg = '';
+
+async function send(force) {
+  const msg = force ? _pendingMsg : document.getElementById('msg').value.trim();
   if (!msg) return;
+  _pendingMsg = msg;
   document.getElementById('loader').style.display = 'block';
   document.getElementById('result').style.display = 'none';
   try {
     const r = await fetch('/add', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: msg, secret: '${ADD_SECRET}' })
+      body: JSON.stringify({ message: msg, secret: '${ADD_SECRET}', force: !!force })
     });
     const data = await r.json();
     const el = document.getElementById('result');
@@ -555,6 +568,20 @@ async function send() {
         + '<small>' + data.date + ' · ' + data.time + '–' + addMinutes(data.time, data.duration || 5)
         + (data.address ? ' · 📍 ' + data.address : '') + '</small>';
       document.getElementById('msg').value = '';
+      _pendingMsg = '';
+    } else if (data.conflict) {
+      // Show conflict warning with confirm/cancel buttons
+      el.className = 'result warn';
+      let html = '⚠️ <strong>На это время уже есть:</strong><ul class="conflict-list">';
+      data.conflicts.forEach(c => {
+        html += '<li>' + c.start + '–' + c.end + ' · ' + escHtml(c.summary) + '</li>';
+      });
+      html += '</ul>Создать событие всё равно?';
+      html += '<div class="conflict-btns">'
+            + '<button class="btn-confirm" onclick="send(true)">✅ Да, создать</button>'
+            + '<button class="btn-cancel"  onclick="cancelConflict()">✖ Отмена</button>'
+            + '</div>';
+      el.innerHTML = html;
     } else {
       el.className = 'result err';
       el.innerHTML = '❌ ' + (data.error || 'Не найдена дата или время');
@@ -568,13 +595,21 @@ async function send() {
   }
   document.getElementById('loader').style.display = 'none';
 }
+function cancelConflict() {
+  _pendingMsg = '';
+  const el = document.getElementById('result');
+  el.style.display = 'none';
+}
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
 function addMinutes(time, mins) {
   const [h,m] = time.split(':').map(Number);
   const t = h*60+m+mins;
   return String(Math.floor(t/60)%24).padStart(2,'0')+':'+String(t%60).padStart(2,'0');
 }
 document.getElementById('msg').addEventListener('keydown', e => {
-  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send();
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send(false);
 });
 </script>
 </body>
@@ -582,19 +617,58 @@ document.getElementById('msg').addEventListener('keydown', e => {
 });
 
 app.post('/add', async (req, res) => {
-  const { message, secret } = req.body;
+  const { message, secret, force } = req.body;
   if (secret !== ADD_SECRET) return res.status(403).json({ error: 'Unauthorized' });
   if (!message) return res.json({ ok: false, error: 'Empty message' });
 
   const event = extractEvent(message, true); // manual: skip keyword check
   if (!event) return res.json({ ok: false, error: 'Не найдена дата или время' });
 
+  const isMeetingType = ['Встреча','Совещание','פגישה','תור','ישיבה'].includes(event.action);
+  const durationMin = isMeetingType ? 60 : 5;
+
+  // ── Conflict check (skip if force=true)
+  if (!force) {
+    try {
+      const calendar = getCalendar();
+      const [y,m,d] = event.date.split('-').map(Number);
+      const [h,min] = event.time.split(':').map(Number);
+      const start = new Date(y, m-1, d, h, min);
+      const end   = new Date(start.getTime() + durationMin * 60000);
+
+      const existing = await calendar.events.list({
+        calendarId: CALENDAR_ID,
+        timeMin: start.toISOString(),
+        timeMax: end.toISOString(),
+        singleEvents: true,
+        orderBy: 'startTime',
+      });
+      const conflicts = (existing.data.items || []).filter(e => e.status !== 'cancelled');
+      if (conflicts.length > 0) {
+        const fmt = dt => dt ? new Date(dt).toLocaleTimeString('ru-RU',
+          { hour:'2-digit', minute:'2-digit', timeZone:'Asia/Jerusalem' }) : '';
+        return res.json({
+          ok: false,
+          conflict: true,
+          conflicts: conflicts.map(e => ({
+            summary: e.summary || '(без названия)',
+            start:   fmt(e.start?.dateTime || e.start?.date),
+            end:     fmt(e.end?.dateTime   || e.end?.date),
+          })),
+          parsed: { date: event.date, time: event.time, duration: durationMin },
+        });
+      }
+    } catch(err) {
+      console.warn('Conflict check failed:', err.message);
+      // don't block creation if check fails
+    }
+  }
+
   try {
     const created = await createCalendarEvent(event, '', '', true);
     console.log(`📝 Manual: "${created.summary}" ${event.date} ${event.time}`);
-    const dur = ['Встреча','Совещание','פגישה'].includes(event.action) ? 60 : 5;
     res.json({ ok: true, summary: created.summary, date: event.date,
-               time: event.time, duration: dur,
+               time: event.time, duration: durationMin,
                address: event.address || null, link: created.htmlLink });
   } catch(err) {
     console.error(`❌ Manual add error: ${err.message}`);
